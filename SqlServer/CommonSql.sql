@@ -10,5 +10,7 @@ WHERE a.type = 'U'
 GROUP BY a.schema_id, a.name
 
 --find column name in tables
-select * FROM INFORMATION_SCHEMA.COLUMNS 
+select distinct TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME
+ FROM INFORMATION_SCHEMA.COLUMNS 
 WHERE COLUMN_NAME LIKE '%bin%'
+order by table_schema, table_name
