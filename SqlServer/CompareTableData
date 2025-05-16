@@ -1,0 +1,52 @@
+--FIND DATA DIFFERENCES
+
+-- Rows in TableA but not in TableB
+SELECT * FROM TableA
+EXCEPT
+SELECT * FROM TableB;
+
+-- In A but not in B
+SELECT * FROM TableA a
+WHERE NOT EXISTS (
+    SELECT 1 FROM TableB b
+    WHERE a.PrimaryKey = b.PrimaryKey
+);
+
+-- In B but not in A
+SELECT * FROM TableB b
+WHERE NOT EXISTS (
+    SELECT 1 FROM TableA a
+    WHERE b.PrimaryKey = a.PrimaryKey
+);
+
+--Full outer join
+SELECT 
+    COALESCE(a.PrimaryKey, b.PrimaryKey) AS Key,
+    a.Col1 AS A_Col1, b.Col1 AS B_Col1,
+    a.Col2 AS A_Col2, b.Col2 AS B_Col2
+FROM TableA a
+FULL OUTER JOIN TableB b ON a.PrimaryKey = b.PrimaryKey
+WHERE 
+    a.PrimaryKey IS NULL OR 
+    b.PrimaryKey IS NULL OR
+    a.Col1 <> b.Col1 OR
+    a.Col2 <> b.Col2;
+
+--Compare by primary key
+SELECT a.ID,
+       a.Name AS A_Name, b.Name AS B_Name,
+       a.Age AS A_Age, b.Age AS B_Age
+FROM TableA a
+JOIN TableB b ON a.ID = b.ID
+WHERE a.Name <> b.Name OR a.Age <> b.Age;
+
+
+--Use checksums
+SELECT a.PrimaryKey
+FROM (
+    SELECT PrimaryKey, CHECKSUM(*) AS ChecksumValue FROM TableA
+) a
+JOIN (
+    SELECT PrimaryKey, CHECKSUM(*) AS ChecksumValue FROM TableB
+) b ON a.PrimaryKey = b.PrimaryKey
+WHERE a.ChecksumValue <> b.ChecksumValue;
