@@ -1,0 +1,73 @@
+/*
+Re-create a table with insert statements
+Here’s a full T-SQL script that:
+    Generates the CREATE TABLE statement
+    Generates all INSERT statements for the data
+    Outputs them as a complete script you can copy and run anywhere
+*/
+
+✅ Works on any physical table (you can modify it for temp tables if needed)
+🔧 T-SQL Script: Generate Create + Insert Statements
+
+DECLARE @TableName SYSNAME = 'YourTableNameHere'; -- <<< Replace with your table name
+DECLARE @SchemaName SYSNAME = 'dbo'; -- <<< Replace with your schema if different
+
+-- Generate the CREATE TABLE statement
+DECLARE @CreateTable NVARCHAR(MAX) = ''
+SELECT @CreateTable = 
+    'CREATE TABLE [' + @SchemaName + '].[' + @TableName + '] (' + CHAR(13) + CHAR(10) +
+    STRING_AGG(
+        '    [' + c.name + '] ' + 
+        TYPE_NAME(c.user_type_id) +
+        CASE 
+            WHEN TYPE_NAME(c.user_type_id) IN ('varchar','char','nvarchar','nchar') 
+                THEN '(' + IIF(c.max_length = -1, 'MAX', CAST(c.max_length / IIF(TYPE_NAME(c.user_type_id) LIKE 'n%', 2, 1) AS VARCHAR)) + ')'
+            WHEN TYPE_NAME(c.user_type_id) IN ('decimal','numeric') 
+                THEN '(' + CAST(c.precision AS VARCHAR) + ',' + CAST(c.scale AS VARCHAR) + ')'
+            ELSE ''
+        END + 
+        CASE WHEN c.is_nullable = 0 THEN ' NOT NULL' ELSE ' NULL' END
+    , ',' + CHAR(13) + CHAR(10))
+    + CHAR(13) + CHAR(10) + ');'
+FROM sys.columns c
+JOIN sys.tables t ON t.object_id = c.object_id
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+WHERE t.name = @TableName AND s.name = @SchemaName;
+
+PRINT @CreateTable;
+PRINT CHAR(13) + CHAR(10);
+
+-- Generate INSERT statements
+DECLARE @InsertSQL NVARCHAR(MAX) = '';
+SELECT @InsertSQL = STRING_AGG('INSERT INTO [' + @SchemaName + '].[' + @TableName + '] (' + ColumnList + ') VALUES (' + ValueList + ');', CHAR(13) + CHAR(10))
+FROM (
+    SELECT 
+        (
+            SELECT STRING_AGG('[' + name + ']', ', ')
+            FROM sys.columns
+            WHERE object_id = OBJECT_ID(@SchemaName + '.' + @TableName)
+        ) AS ColumnList,
+        (
+            SELECT STRING_AGG(
+                CASE 
+                    WHEN col.system_type_id IN (167, 175, 231, 239) -- varchar, char, nvarchar, nchar
+                        THEN '''' + REPLACE(CONVERT(NVARCHAR(MAX), val), '''', '''''') + ''''
+                    WHEN col.system_type_id IN (61) -- datetime
+                        THEN '''' + CONVERT(VARCHAR, val, 120) + ''''
+                    ELSE CONVERT(VARCHAR, val)
+                END, ', ')
+            FROM (
+                SELECT col.name, col.system_type_id,
+                       val = CONVERT(SQL_VARIANT, D.col.value('(./text())[1]', 'nvarchar(max)'))
+                FROM sys.columns col
+                CROSS APPLY (
+                    SELECT CAST((SELECT * 
+                                 FROM OPENJSON((SELECT * FROM (SELECT * FROM ' + QUOTENAME(@SchemaName) + '.' + QUOTENAME(@TableName) + ' FOR JSON PATH, INCLUDE_NULL_VALUES)) 
+                                 WITH (' + STRING_AGG('[' + name + '] sql_variant', ',') + ')') AS XML)
+                ) D(col)
+                WHERE col.object_id = OBJECT_ID(@SchemaName + '.' + @TableName)
+            ) x
+        ) AS ValueList
+) AS InsertData;
+
+PRINT @InsertSQL;
