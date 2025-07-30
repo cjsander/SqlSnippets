@@ -73,61 +73,60 @@ FROM (
 PRINT @InsertSQL;
 
 --Another approach
-DECLARE @TableName SYSNAME = 'YourTableNameHere'; -- <<< Replace with your table
+DECLARE @TableName SYSNAME = 'YourTableNameHere';  -- Change this to your table
 DECLARE @SchemaName SYSNAME = 'dbo';
 
 -- Step 1: Generate CREATE TABLE
 PRINT '-- CREATE TABLE';
-SELECT 'CREATE TABLE [' + @SchemaName + '].[' + @TableName + '] (' +
-       STRING_AGG(
-           CHAR(10) + '    [' + c.name + '] ' +
-           TYPE_NAME(c.user_type_id) +
-           CASE 
-               WHEN TYPE_NAME(c.user_type_id) IN ('varchar', 'char', 'nvarchar', 'nchar') 
-                   THEN '(' + 
-                        CASE WHEN c.max_length = -1 THEN 'MAX'
-                             ELSE CAST(c.max_length / IIF(TYPE_NAME(c.user_type_id) LIKE 'n%', 2, 1) AS VARCHAR)
-                        END + ')'
-               WHEN TYPE_NAME(c.user_type_id) IN ('decimal', 'numeric') 
-                   THEN '(' + CAST(c.precision AS VARCHAR) + ',' + CAST(c.scale AS VARCHAR) + ')'
-               ELSE ''
-           END +
-           CASE WHEN c.is_nullable = 0 THEN ' NOT NULL' ELSE ' NULL' END
-       , ',' ) + CHAR(10) + ');'
+DECLARE @CreateTable NVARCHAR(MAX) = '';
+SELECT @CreateTable = 'CREATE TABLE [' + @SchemaName + '].[' + @TableName + '] (' + CHAR(13) + CHAR(10) +
+    STRING_AGG(
+        '    [' + c.name + '] ' +
+        TYPE_NAME(c.user_type_id) +
+        CASE 
+            WHEN TYPE_NAME(c.user_type_id) IN ('varchar', 'char', 'nvarchar', 'nchar') 
+                THEN '(' + 
+                     CASE WHEN c.max_length = -1 THEN 'MAX'
+                          ELSE CAST(c.max_length / IIF(TYPE_NAME(c.user_type_id) LIKE 'n%', 2, 1) AS VARCHAR)
+                     END + ')'
+            WHEN TYPE_NAME(c.user_type_id) IN ('decimal','numeric') 
+                THEN '(' + CAST(c.precision AS VARCHAR) + ',' + CAST(c.scale AS VARCHAR) + ')'
+            ELSE ''
+        END +
+        CASE WHEN c.is_nullable = 0 THEN ' NOT NULL' ELSE ' NULL' END
+    , ',' + CHAR(13) + CHAR(10))
+    + CHAR(13) + CHAR(10) + ');'
 FROM sys.columns c
 JOIN sys.tables t ON c.object_id = t.object_id
 JOIN sys.schemas s ON s.schema_id = t.schema_id
 WHERE t.name = @TableName AND s.name = @SchemaName;
 
--- Step 2: Generate INSERT statements
-PRINT CHAR(10) + '-- INSERT DATA';
-DECLARE @Cols NVARCHAR(MAX);
+PRINT @CreateTable;
 
--- Get list of columns for insert
-SELECT @Cols = STRING_AGG(QUOTENAME(name), ', ')
+-- Step 2: Generate INSERT INTO statements
+PRINT CHAR(13) + '-- INSERT DATA';
+
+DECLARE @Columns NVARCHAR(MAX);
+SELECT @Columns = STRING_AGG(QUOTENAME(name), ', ')
 FROM sys.columns
 WHERE object_id = OBJECT_ID(QUOTENAME(@SchemaName) + '.' + QUOTENAME(@TableName));
 
--- Build the INSERTs using dynamic SQL
-DECLARE @SQL NVARCHAR(MAX) = 
-'SELECT ''INSERT INTO [' + @SchemaName + '].[' + @TableName + '] (' + @Cols + ') VALUES ('' + ' + CHAR(10) +
-    STRING_AGG(
-        '    ' + 
-        CASE 
-            WHEN system_type_id IN (167, 175, 231, 239) -- string types
-                THEN ''''''''' + REPLACE(CONVERT(NVARCHAR(MAX), ' + QUOTENAME(name) + '), ''''''', '''''''''') + ''''''''
-            WHEN system_type_id IN (61) -- datetime
-                THEN ''''''''' + CONVERT(VARCHAR, ' + QUOTENAME(name) + ', 120) + ''''''''
-            WHEN system_type_id IN (104) -- bit
-                THEN 'CASE WHEN ' + QUOTENAME(name) + ' = 1 THEN ''1'' ELSE ''0'' END'
-            WHEN system_type_id IN (106, 108, 62, 56, 60, 59, 48, 52) -- numeric
-                THEN 'CONVERT(VARCHAR, ' + QUOTENAME(name) + ')'
-            ELSE 'ISNULL(CONVERT(VARCHAR, ' + QUOTENAME(name) + '), ''NULL'')'
-        END,
-        ' + '','' + ' + CHAR(10)
-    )
-+ ' + '');'' FROM [' + @SchemaName + '].[' + @TableName + '];';
+-- Build dynamic SQL to generate insert rows
+DECLARE @SQL NVARCHAR(MAX) = '
+SELECT ''INSERT INTO [' + @SchemaName + '].[' + @TableName + '] (' + @Columns + ') VALUES ('' + 
+' + STRING_AGG(
+    CASE 
+        WHEN system_type_id IN (167, 175, 231, 239) THEN  -- string types
+            ''''''''' + REPLACE(CONVERT(NVARCHAR(MAX), ' + QUOTENAME(name) + '), ''''''', '''''''''') + ''''''''
+        WHEN system_type_id = 61 THEN  -- datetime
+            ''''''''' + CONVERT(VARCHAR, ' + QUOTENAME(name) + ', 120) + ''''''''
+        WHEN system_type_id = 104 THEN  -- bit
+            'CASE WHEN ' + QUOTENAME(name) + ' = 1 THEN ''1'' ELSE ''0'' END'
+        ELSE
+            'ISNULL(CONVERT(VARCHAR, ' + QUOTENAME(name) + '), ''NULL'')'
+    END
+, ' + '','' + ') + '');'' 
+FROM [' + @SchemaName + '].[' + @TableName + ']';
 
--- Execute and print results
+-- Run the dynamic SQL
 EXEC sp_executesql @SQL;
-
