@@ -74,12 +74,13 @@ PRINT @InsertSQL;
 
 --Another approach
 DECLARE @SchemaName SYSNAME = 'dbo';
-DECLARE @TableName SYSNAME = 'YourTableNameHere'; -- Change to your table name
+DECLARE @TableName SYSNAME = 'YourTableNameHere'; -- CHANGE THIS LINE
 
 -- Step 1: Generate CREATE TABLE
 PRINT '-- CREATE TABLE';
 
-DECLARE @CreateTable NVARCHAR(MAX) = '';
+DECLARE @CreateTable NVARCHAR(MAX);
+
 SELECT @CreateTable = 
     'CREATE TABLE [' + @SchemaName + '].[' + @TableName + '] (' + CHAR(13) +
     STRING_AGG(
@@ -106,30 +107,35 @@ WHERE tb.name = @TableName AND s.name = @SchemaName;
 
 PRINT @CreateTable;
 
--- Step 2: Generate INSERT INTO statements
+-- Step 2: Generate INSERT Statements
 PRINT CHAR(13) + '-- INSERT DATA';
 
--- Build list of columns
 DECLARE @ColList NVARCHAR(MAX);
 SELECT @ColList = STRING_AGG(QUOTENAME(name), ', ')
 FROM sys.columns
 WHERE object_id = OBJECT_ID(QUOTENAME(@SchemaName) + '.' + QUOTENAME(@TableName));
 
--- Build the value formatting logic
 DECLARE @ValueList NVARCHAR(MAX);
 SELECT @ValueList = STRING_AGG(
     CASE 
         WHEN t.name IN ('varchar','char','nvarchar','nchar') THEN
-            ''''''''' + REPLACE(CONVERT(NVARCHAR(MAX), ' + QUOTENAME(c.name) + '), ''''''', '''''''''') + ''''''''
+            ''''''''' + REPLACE(ISNULL(CONVERT(NVARCHAR(MAX), [' + c.name + ']), ''''), ''''''', '''''''''') + ''''''''
         WHEN t.name IN ('datetime','smalldatetime','date','datetime2') THEN
-            ''''''''' + CONVERT(VARCHAR, ' + QUOTENAME(c.name) + ', 120) + ''''''''
+            'ISNULL('''''''' + CONVERT(VARCHAR, [' + c.name + '], 120) + '''''''', ''NULL'')'
         WHEN t.name = 'bit' THEN
-            'CASE WHEN ' + QUOTENAME(c.name) + ' = 1 THEN ''1'' ELSE ''0'' END'
+            'ISNULL(CAST([' + c.name + '] AS VARCHAR), ''NULL'')'
         ELSE
-            'ISNULL(CONVERT(VARCHAR, ' + QUOTENAME(c.name) + '), ''NULL'')'
-    END, 
-    ' + '','' + '
-)
+            'ISNULL(CONVERT(VARCHAR, [' + c.name + ']), ''NULL'')'
+    END
+, ' + '','' + ')
 FROM sys.columns c
 JOIN sys.types t ON c.user_type_id = t.user_type_id
-WHERE c.object_id = OBJECT_ID(QUOTENAME(@SchemaName) + '.' + QUOTENAME
+WHERE c.object_id = OBJECT_ID(QUOTENAME(@SchemaName) + '.' + QUOTENAME(@TableName));
+
+DECLARE @SQL NVARCHAR(MAX);
+SET @SQL = '
+SELECT ''INSERT INTO [' + @SchemaName + '].[' + @TableName + '] (' + @ColList + ') VALUES ('' + 
+' + @ValueList + ' + '');''
+FROM [' + @SchemaName + '].[' + @TableName + '];';
+
+EXEC sp_executesql @SQL;
