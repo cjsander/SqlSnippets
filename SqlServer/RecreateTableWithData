@@ -74,70 +74,62 @@ PRINT @InsertSQL;
 
 --Another approach
 DECLARE @SchemaName SYSNAME = 'dbo';
-DECLARE @TableName SYSNAME = 'YourTableNameHere';  -- Change to your table
+DECLARE @TableName SYSNAME = 'YourTableNameHere'; -- Change to your table name
 
--- STEP 1: Generate CREATE TABLE
-DECLARE @CreateScript NVARCHAR(MAX) = 'CREATE TABLE [' + @SchemaName + '].[' + @TableName + '] (' + CHAR(10);
-DECLARE @Columns NVARCHAR(MAX) = '';
+-- Step 1: Generate CREATE TABLE
+PRINT '-- CREATE TABLE';
 
-SELECT @Columns = @Columns +
-    '    [' + c.name + '] ' +
-    t.name +
-    CASE 
-        WHEN t.name IN ('varchar','char','nvarchar','nchar') THEN
-            '(' + 
-                CASE WHEN c.max_length = -1 THEN 'MAX'
-                     ELSE CAST(c.max_length / CASE WHEN t.name LIKE 'n%' THEN 2 ELSE 1 END AS VARCHAR)
-                END + ')'
-        WHEN t.name IN ('decimal','numeric') THEN
-            '(' + CAST(c.precision AS VARCHAR) + ',' + CAST(c.scale AS VARCHAR) + ')'
-        ELSE ''
-    END +
-    CASE WHEN c.is_nullable = 0 THEN ' NOT NULL' ELSE ' NULL' END + ',' + CHAR(10)
+DECLARE @CreateTable NVARCHAR(MAX) = '';
+SELECT @CreateTable = 
+    'CREATE TABLE [' + @SchemaName + '].[' + @TableName + '] (' + CHAR(13) +
+    STRING_AGG(
+        '    [' + c.name + '] ' + 
+        t.name +
+        CASE 
+            WHEN t.name IN ('varchar','char','nvarchar','nchar') THEN 
+                '(' + 
+                    CASE 
+                        WHEN c.max_length = -1 THEN 'MAX' 
+                        ELSE CAST(c.max_length / CASE WHEN t.name LIKE 'n%' THEN 2 ELSE 1 END AS VARCHAR)
+                    END + ')'
+            WHEN t.name IN ('decimal','numeric') THEN 
+                '(' + CAST(c.precision AS VARCHAR) + ',' + CAST(c.scale AS VARCHAR) + ')'
+            ELSE ''
+        END +
+        CASE WHEN c.is_nullable = 0 THEN ' NOT NULL' ELSE ' NULL' END
+    , ',' + CHAR(13)) + CHAR(13) + ');'
 FROM sys.columns c
 JOIN sys.types t ON c.user_type_id = t.user_type_id
 JOIN sys.tables tb ON tb.object_id = c.object_id
 JOIN sys.schemas s ON s.schema_id = tb.schema_id
-WHERE tb.name = @TableName AND s.name = @SchemaName
-ORDER BY c.column_id;
+WHERE tb.name = @TableName AND s.name = @SchemaName;
 
--- Remove final comma and close table definition
-SET @CreateScript = @CreateScript + LEFT(@Columns, LEN(@Columns) - 2) + CHAR(10) + ');'
+PRINT @CreateTable;
 
--- Output CREATE TABLE
-PRINT '-- CREATE TABLE';
-PRINT @CreateScript;
+-- Step 2: Generate INSERT INTO statements
+PRINT CHAR(13) + '-- INSERT DATA';
 
--- STEP 2: Generate INSERT Statements
-PRINT CHAR(10) + '-- INSERT DATA';
-
-DECLARE @ColList NVARCHAR(MAX) = '';
+-- Build list of columns
+DECLARE @ColList NVARCHAR(MAX);
 SELECT @ColList = STRING_AGG(QUOTENAME(name), ', ')
 FROM sys.columns
 WHERE object_id = OBJECT_ID(QUOTENAME(@SchemaName) + '.' + QUOTENAME(@TableName));
 
-DECLARE @InsertSQL NVARCHAR(MAX) = '';
-SELECT @InsertSQL = 
-    'SELECT ''INSERT INTO [' + @SchemaName + '].[' + @TableName + '] (' + @ColList + ') VALUES ('' + ' + CHAR(10) +
-    STUFF((
-        SELECT 
-            ' + '','' + ' + 
-            CASE 
-                WHEN t.name IN ('varchar','char','nvarchar','nchar') THEN
-                    ''''''''' + REPLACE(CONVERT(NVARCHAR(MAX), [' + c.name + ']), ''''''', '''''''''') + ''''''''
-                WHEN t.name IN ('datetime','smalldatetime','date','datetime2') THEN
-                    ''''''''' + CONVERT(VARCHAR, [' + c.name + '], 120) + ''''''''
-                WHEN t.name = 'bit' THEN
-                    'CASE WHEN [' + c.name + '] = 1 THEN ''1'' ELSE ''0'' END'
-                ELSE
-                    'ISNULL(CONVERT(VARCHAR, [' + c.name + ']), ''NULL'')'
-            END
-        FROM sys.columns c
-        JOIN sys.types t ON c.user_type_id = t.user_type_id
-        WHERE c.object_id = OBJECT_ID(QUOTENAME(@SchemaName) + '.' + QUOTENAME(@TableName))
-        ORDER BY c.column_id
-        FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'), 1, 8, '') +
-    ' + '');'' FROM [' + @SchemaName + '].[' + @TableName + '];';
-
--- Execute to show INSERT statements
-EXEC sp_executesql @InsertSQL;
+-- Build the value formatting logic
+DECLARE @ValueList NVARCHAR(MAX);
+SELECT @ValueList = STRING_AGG(
+    CASE 
+        WHEN t.name IN ('varchar','char','nvarchar','nchar') THEN
+            ''''''''' + REPLACE(CONVERT(NVARCHAR(MAX), ' + QUOTENAME(c.name) + '), ''''''', '''''''''') + ''''''''
+        WHEN t.name IN ('datetime','smalldatetime','date','datetime2') THEN
+            ''''''''' + CONVERT(VARCHAR, ' + QUOTENAME(c.name) + ', 120) + ''''''''
+        WHEN t.name = 'bit' THEN
+            'CASE WHEN ' + QUOTENAME(c.name) + ' = 1 THEN ''1'' ELSE ''0'' END'
+        ELSE
+            'ISNULL(CONVERT(VARCHAR, ' + QUOTENAME(c.name) + '), ''NULL'')'
+    END, 
+    ' + '','' + '
+)
+FROM sys.columns c
+JOIN sys.types t ON c.user_type_id = t.user_type_id
+WHERE c.object_id = OBJECT_ID(QUOTENAME(@SchemaName) + '.' + QUOTENAME
